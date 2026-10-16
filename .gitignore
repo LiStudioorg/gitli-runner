@@ -1,0 +1,25 @@
+# 二进制
+/gitli-runner
+/gitli-runner.exe
+*.exe
+*.test
+*.out
+
+# 配置与敏感信息
+/runner.toml
+*.toml
+!runner.example.toml
+.env
+
+# 运行数据
+/data/
+/dist/
+*.log
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

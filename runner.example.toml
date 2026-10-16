@@ -1,0 +1,76 @@
+# gitli-runner 配置示例
+#
+# 复制为 runner.toml 并填入你的注册信息：
+#   cp runner.example.toml runner.toml
+#
+# 注意：runner.toml 含真实 token，已被 .gitignore 忽略，切勿提交。
+
+[runner]
+# gitli 主服务地址（必填）
+server = "https://git.example.com"
+# Runner ID，从 gitli 后台「添加 Runner」获取（必填）
+id = "runner-a1b2c3"
+# Runner Token，从 gitli 后台获取（必填，仅显示一次）
+token = "glr_xxxxxxxxxxxxxxxxxxxxxxxx"
+# 与主服务交互的标签，可用于定向派发（可选）
+labels = ["linux", "docker"]
+# 单次拉取任务失败后的重试间隔
+poll_interval = "10s"
+# 心跳间隔
+heartbeat_interval = "30s"
+# HTTP 请求超时
+request_timeout = "30s"
+# 是否校验主服务 TLS 证书（自签名证书可设为 false，需自行评估风险）
+tls_skip_verify = false
+
+[executor]
+# 执行后端：docker / podman / shell
+type = "docker"
+# 默认执行镜像
+image = "alpine:3.20"
+# 单任务超时
+timeout = "30m"
+# 工作目录（容器内），仓库会被复制到此
+workdir = "/workspace"
+# 单个任务结束是否自动清理容器
+auto_remove = true
+# 是否挂载宿主 docker.sock（仅 docker 模式，安全风险自负）
+mount_docker_sock = false
+# 传给容器的额外环境变量
+env = ["CI=true"]
+# 是否以非 root 用户在容器内执行
+non_root = false
+
+# shell 模式（仅用于调试！会直接在宿主机执行命令，默认关闭）
+[executor.shell]
+enable = false
+# 允许 shell 执行时使用的 shell
+shell = "/bin/sh"
+
+# docker / podman 通用资源限制
+[executor.limits]
+cpus = "2"
+memory = "2g"
+pids = 512
+
+[git]
+# 拉取用户仓库时使用的 git 可执行文件
+binary = "git"
+# 是否使用 shallow clone
+shallow = true
+# shallow clone 深度
+depth = 1
+
+[log]
+# 日志级别：debug / info / warn / error
+level = "info"
+# 格式：text / json
+format = "text"
+# 日志文件（留空则输出到 stderr）
+file = ""
+
+[cache]
+# 本地缓存目录，用于存放仓库与临时数据
+dir = "/var/lib/gitli-runner"
+# 是否启用缓存
+enable = true

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0
+services:
+  runner:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./runner.toml:/etc/gitli-runner/runner.toml:ro
+      - runner-data:/var/lib/gitli-runner
+      # 挂载 docker.sock 才能用 docker executor（安全风险自负）。
+      - /var/run/docker.sock:/var/run/docker.sock
+volumes:
+  runner-data:

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0
+.git
+.gitignore
+dist
+gitli-runner
+runner.toml
+*.log
