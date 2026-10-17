@@ -14,11 +14,11 @@ import (
 
 func testConfig(server string) *config.Config {
 	c := &config.Config{}
-	c.Runner.Server = server
-	c.Runner.ID = "runner-test"
-	c.Runner.Token = "glr_secret"
-	c.Runner.PollInterval = config.Duration(10 * time.Second)
-	c.Runner.RequestTimeout = config.Duration(10 * time.Second)
+	c.Core.Server = server
+	c.Core.ID = "runner-test"
+	c.Core.Token = "glr_secret"
+	c.Client.PollInterval = config.Duration(10 * time.Second)
+	c.Client.RequestTimeout = config.Duration(10 * time.Second)
 	return c
 }
 

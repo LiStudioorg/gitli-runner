@@ -1,36 +1,96 @@
+# =============================================================================
 # gitli-runner 配置示例
-#
-# 复制为 runner.toml 并填入你的注册信息：
+# -----------------------------------------------------------------------------
+# 复制为 runner.toml 并填入从 gitli 后台获取的 id / token：
 #   cp runner.example.toml runner.toml
 #
-# 注意：runner.toml 含真实 token，已被 .gitignore 忽略，切勿提交。
+# runner.toml 含真实 token，已被 .gitignore 忽略，切勿提交。
+# 所有时间字段支持 "30s" / "10m" / "1h"；大小字段支持 "10MB" / "512MiB" / "1g"。
+# =============================================================================
 
-[runner]
-# gitli 主服务地址（必填）
+# ==========================================
+# 核心配置（必填）
+# ==========================================
+[core]
+# 主服务地址（必填）
 server = "https://git.example.com"
-# Runner ID，从 gitli 后台「添加 Runner」获取（必填）
+# Runner ID 和 Token（从 gitli 后台「添加 Runner」获取，Token 只显示一次）
 id = "runner-a1b2c3"
-# Runner Token，从 gitli 后台获取（必填，仅显示一次）
 token = "glr_xxxxxxxxxxxxxxxxxxxxxxxx"
-# 与主服务交互的标签，可用于定向派发（可选）
-labels = ["linux", "docker"]
-# 单次拉取任务失败后的重试间隔
-poll_interval = "10s"
-# 心跳间隔
+# 标签，用于工作流 runs-on 匹配
+labels = ["self-hosted", "linux", "amd64"]
+
+
+# ==========================================
+# 并发与任务执行限制（非常关键）
+# ==========================================
+[execution]
+# 最大同时执行的工作流任务数。默认 1。
+# 低配机器请保持 1，避免内存/CPU 被多个任务同时打满。
+max_concurrent_jobs = 1
+
+# 单任务最大超时时间，超时后自动终止。默认 30m。
+job_timeout = "30m"
+
+# 工作目录，用于存放拉取下来的代码与执行脚本。
+# 留空则使用缓存目录或系统临时目录。
+work_dir = "/var/lib/gitli-runner/work"
+
+# 任务完成后的清理策略：
+#   "always"  - 总是删除（推荐，节省磁盘）
+#   "never"   - 保留用于调试
+#   "success" - 仅成功时删除
+cleanup_policy = "always"
+
+
+# ==========================================
+# 通信配置
+# ==========================================
+[client]
+# 轮询拉取任务的间隔。默认 5s。
+poll_interval = "5s"
+# 发送心跳的间隔。默认 30s。
 heartbeat_interval = "30s"
-# HTTP 请求超时
-request_timeout = "30s"
-# 是否校验主服务 TLS 证书（自签名证书可设为 false，需自行评估风险）
+# 单次 API 请求的超时时间。默认 10s。
+request_timeout = "10s"
+# 是否跳过主服务 TLS 证书校验（仅自签名测试环境）。默认 false。
 tls_skip_verify = false
 
+
+# ==========================================
+# 环境变量与 Shell 配置
+# ==========================================
+[environment]
+# 注入到所有任务中的全局环境变量（可被工作流内的 env 覆盖）。
+variables = { GOPROXY = "https://goproxy.cn,direct", NODE_ENV = "production" }
+# 全局默认 Shell。留空则自动探测（Unix 为 sh，Windows 为 cmd）。
+# 工作流 YAML 中的 shell 字段优先级更高。
+default_shell = ""
+
+
+# ==========================================
+# 日志与监控
+# ==========================================
+[log]
+level = "info"        # debug | info | warn | error
+format = "text"       # text | json
+# 单次任务的日志最大输出限制，防止死循环刷爆磁盘与主服务数据库。默认 10MB。
+max_log_size = "10MB"
+# 日志文件路径（留空则输出到 stderr）
+file = ""
+
+
+# ==========================================
+# 执行后端（docker / podman / shell）
+# ==========================================
 [executor]
-# 执行后端：docker / podman / shell
+# 执行后端。可选值：docker / podman / shell
+#   docker / podman：在容器内隔离执行（推荐）
+#   shell：直接在宿主机执行（仅调试，默认禁用）
 type = "docker"
 # 默认执行镜像
 image = "alpine:3.20"
-# 单任务超时
-timeout = "30m"
-# 工作目录（容器内），仓库会被复制到此
+# 工作目录（容器内）
 workdir = "/workspace"
 # 单个任务结束是否自动清理容器
 auto_remove = true
@@ -41,18 +101,22 @@ env = ["CI=true"]
 # 是否以非 root 用户在容器内执行
 non_root = false
 
-# shell 模式（仅用于调试！会直接在宿主机执行命令，默认关闭）
+# shell 模式（仅调试！会直接在宿主机执行命令，默认关闭）
 [executor.shell]
 enable = false
 # 允许 shell 执行时使用的 shell
 shell = "/bin/sh"
 
-# docker / podman 通用资源限制
+# 容器资源限制
 [executor.limits]
 cpus = "2"
 memory = "2g"
 pids = 512
 
+
+# ==========================================
+# Git
+# ==========================================
 [git]
 # 拉取用户仓库时使用的 git 可执行文件
 binary = "git"
@@ -61,14 +125,10 @@ shallow = true
 # shallow clone 深度
 depth = 1
 
-[log]
-# 日志级别：debug / info / warn / error
-level = "info"
-# 格式：text / json
-format = "text"
-# 日志文件（留空则输出到 stderr）
-file = ""
 
+# ==========================================
+# 缓存
+# ==========================================
 [cache]
 # 本地缓存目录，用于存放仓库与临时数据
 dir = "/var/lib/gitli-runner"

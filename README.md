@@ -79,3 +79,52 @@ make build      # 本机静态编译
 make test       # 单元测试
 make lint       # gofmt + go vet
 ```
+
+
+## 配置详解
+
+完整模板见 [`runner.example.toml`](./runner.example.toml)。所有时间字段支持 `30s`/`10m`/`1h`，大小字段支持 `10MB`/`512MiB`/`1g`。
+
+### `[core]`（必填）
+| 键 | 说明 | 默认 |
+| --- | --- | --- |
+| `server` | 主服务地址 | — |
+| `id` | Runner ID（后台生成） | — |
+| `token` | Runner Token（只显示一次） | — |
+| `labels` | 标签，用于工作流 `runs-on` 匹配 | `["self-hosted"]` |
+
+### `[execution]`（并发与清理，关键）
+| 键 | 说明 | 默认 |
+| --- | --- | --- |
+| `max_concurrent_jobs` | 最大并发任务数（信号量严格限制） | `1` |
+| `job_timeout` | 单任务超时，超时 `context.WithTimeout` 终止 | `30m` |
+| `work_dir` | 工作目录（拉取代码与执行脚本） | 缓存目录/临时目录 |
+| `cleanup_policy` | `always` / `never` / `success` | `always` |
+
+> **低配机器建议**：`max_concurrent_jobs = 1` 且 `cleanup_policy = "always"`，避免内存/磁盘被多任务同时打满。
+
+### `[client]`
+| 键 | 说明 | 默认 |
+| --- | --- | --- |
+| `poll_interval` | 轮询任务间隔 | `5s` |
+| `heartbeat_interval` | 心跳间隔 | `30s` |
+| `request_timeout` | 单次 API 超时 | `10s` |
+| `tls_skip_verify` | 跳过 TLS 校验（仅测试） | `false` |
+
+### `[environment]`
+| 键 | 说明 |
+| --- | --- |
+| `variables` | 全局环境变量（可被工作流 `env` 覆盖） |
+| `default_shell` | 默认 Shell；空则自动探测（Unix `sh`，Windows `cmd`） |
+
+### `[log]`
+| 键 | 说明 | 默认 |
+| --- | --- | --- |
+| `level` | `debug`/`info`/`warn`/`error` | `info` |
+| `format` | `text`/`json` | `text` |
+| `max_log_size` | 单任务日志上限（超出截断） | `10MB` |
+| `file` | 日志文件（空则 stderr） | 空 |
+
+### 工作流指定 Shell
+
+工作流 YAML 支持 `shell: bash` / `shell: pwsh` / `shell: cmd`（Job 级或顶层）。Runner 会用 `exec.LookPath` 校验 Shell 是否存在，不存在则任务直接失败并给出明确错误；容器模式下在镜像内使用该 Shell。

@@ -55,17 +55,17 @@ func New(cfg *config.Config, version string) *Client {
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     90 * time.Second,
 	}
-	if cfg.Runner.TLSSkipVerify {
+	if cfg.Client.TLSSkipVerify {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in via config
 	}
 	return &Client{
-		base:    strings.TrimRight(cfg.Runner.Server, "/"),
-		id:      cfg.Runner.ID,
-		tok:     cfg.Runner.Token,
-		labels:  cfg.Runner.Labels,
+		base:    strings.TrimRight(cfg.Core.Server, "/"),
+		id:      cfg.Core.ID,
+		tok:     cfg.Core.Token,
+		labels:  cfg.Core.Labels,
 		version: version,
 		http: &http.Client{
-			Timeout:   cfg.Runner.RequestTimeout.Std(),
+			Timeout:   cfg.Client.RequestTimeout.Std(),
 			Transport: tr,
 		},
 	}

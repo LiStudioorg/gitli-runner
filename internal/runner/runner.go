@@ -23,6 +23,7 @@ type Runner struct {
 	log    *slog.Logger
 	client *client.Client
 	exec   executor.Executor
+	sem    chan struct{}
 }
 
 // New builds a Runner.
@@ -36,11 +37,16 @@ func New(cfg *config.Config, log *slog.Logger, version string) (*Runner, error) 
 	if err != nil {
 		return nil, err
 	}
+	maxJobs := cfg.MaxConcurrent()
+	if maxJobs <= 0 {
+		maxJobs = 1
+	}
 	return &Runner{
 		cfg:    cfg,
 		log:    log,
 		client: client.New(cfg, version),
 		exec:   ex,
+		sem:    make(chan struct{}, maxJobs),
 	}, nil
 }
 
@@ -52,8 +58,8 @@ func (r *Runner) Register(ctx context.Context) error {
 // Run enters the loop until ctx is cancelled.
 func (r *Runner) Run(ctx context.Context) error {
 	r.log.Info("runner loop started",
-		"runner_id", r.cfg.Runner.ID,
-		"server", r.cfg.Runner.Server,
+		"runner_id", r.cfg.Core.ID,
+		"server", r.cfg.Core.Server,
 		"executor", r.cfg.Executor.Type,
 	)
 	// Best-effort registration/connectivity check at startup.
@@ -61,9 +67,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn("register failed (continuing)", "err", err)
 	}
 
-	beat := time.NewTicker(r.cfg.Runner.HeartbeatInterval.Std())
+	beat := time.NewTicker(r.cfg.Client.HeartbeatInterval.Std())
 	defer beat.Stop()
-	poll := time.NewTicker(r.cfg.Runner.PollInterval.Std())
+	poll := time.NewTicker(r.cfg.Client.PollInterval.Std())
 	defer poll.Stop()
 
 	for {
@@ -72,7 +78,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.log.Info("shutting down")
 			return nil
 		case <-beat.C:
-			hctx, cancel := context.WithTimeout(ctx, r.cfg.Runner.RequestTimeout.Std())
+			hctx, cancel := context.WithTimeout(ctx, r.cfg.Client.RequestTimeout.Std())
 			if err := r.client.Heartbeat(hctx); err != nil {
 				r.log.Warn("heartbeat failed", "err", err)
 			}
@@ -86,14 +92,26 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) pollOnce(ctx context.Context) error {
+	// Wait for a free slot before polling so we never claim more jobs than we
+	// can run concurrently.
+	select {
+	case r.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil
+	}
 	job, err := r.client.Poll(ctx)
 	if err != nil {
+		<-r.sem
 		return err
 	}
 	if job == nil {
+		<-r.sem
 		return nil
 	}
-	r.execute(ctx, job)
+	go func() {
+		defer func() { <-r.sem }()
+		r.execute(ctx, job)
+	}()
 	return nil
 }
 
@@ -111,11 +129,13 @@ func (r *Runner) execute(ctx context.Context, job *client.Job) {
 	}
 
 	jobCtx := ctx
-	if job.TimeoutSec > 0 {
-		var cancel context.CancelFunc
-		jobCtx, cancel = context.WithTimeout(ctx, time.Duration(job.TimeoutSec)*time.Second)
-		defer cancel()
+	timeout := r.cfg.Execution.JobTimeout.Std()
+	if job.TimeoutSec > 0 && time.Duration(job.TimeoutSec)*time.Second < timeout {
+		timeout = time.Duration(job.TimeoutSec) * time.Second
 	}
+	var cancel context.CancelFunc
+	jobCtx, cancel = context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	code, err := r.runJob(jobCtx, job, logw)
 	_ = logw.Close()
@@ -134,34 +154,59 @@ func (r *Runner) execute(ctx context.Context, job *client.Job) {
 }
 
 // runJob prepares the workspace and executes the workflow, returning the exit code.
-func (r *Runner) runJob(ctx context.Context, job *client.Job, out io.Writer) (int, error) {
-	ws, err := os.MkdirTemp(r.workRoot(), "job-")
-	if err != nil {
-		return 1, err
+func (r *Runner) runJob(ctx context.Context, job *client.Job, out io.Writer) (code int, err error) {
+	root := r.workRoot()
+	if root != "" {
+		if merr := os.MkdirAll(root, 0o750); merr != nil {
+			return 1, merr
+		}
 	}
-	defer func() { _ = os.RemoveAll(ws) }()
+	ws, werr := os.MkdirTemp(root, "job-")
+	if werr != nil {
+		return 1, werr
+	}
+	success := false
+	defer func() {
+		// cleanup_policy: always | never | success
+		if r.cfg.CleanupAfter(success) {
+			_ = os.RemoveAll(ws)
+		} else {
+			fmt.Fprintf(out, "[gitli-runner] work dir kept: %s\n", ws)
+		}
+	}()
 
-	if err := r.clone(ctx, job, ws, out); err != nil {
-		return 1, err
+	if cerr := r.clone(ctx, job, ws, out); cerr != nil {
+		return 1, cerr
 	}
 
-	wf, err := workflow.Parse([]byte(job.Workflow))
-	if err != nil {
-		return 1, err
+	wf, perr := workflow.Parse([]byte(job.Workflow))
+	if perr != nil {
+		return 1, perr
 	}
 	script := wf.Script()
 
-	env := []string{}
+	// Global env from [environment].variables, overridden by job env.
+	envMap := map[string]string{}
+	for k, v := range r.cfg.Environment.Variables {
+		envMap[k] = v
+	}
 	for k, v := range job.Env {
+		envMap[k] = v
+	}
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
-	if err := r.exec.Run(ctx, ws, script, env, out); err != nil {
+
+	shell := wf.EffectiveShell(r.cfg.Environment.DefaultShell)
+	if rerr := r.exec.RunWithShell(ctx, ws, script, env, shell, out); rerr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			fmt.Fprintln(out, "[gitli-runner] job timed out")
-			return 124, err
+			return 124, rerr
 		}
-		return 1, err
+		return 1, rerr
 	}
+	success = true
 	return 0, nil
 }
 
@@ -187,6 +232,9 @@ func (r *Runner) clone(ctx context.Context, job *client.Job, ws string, out io.W
 }
 
 func (r *Runner) workRoot() string {
+	if r.cfg.Execution.WorkDir != "" {
+		return r.cfg.Execution.WorkDir
+	}
 	if r.cfg.Cache.Enable {
 		return r.cfg.Cache.Dir
 	}

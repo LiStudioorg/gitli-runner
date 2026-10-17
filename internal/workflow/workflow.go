@@ -19,16 +19,37 @@ type Step struct {
 type Job struct {
 	Name  string   `yaml:"name"`
 	Image string   `yaml:"image"`
+	Shell string   `yaml:"shell"`
 	Env   []string `yaml:"env"`
 	Steps []Step   `yaml:"steps"`
 }
 
 // Workflow is a parsed workflow file.
 type Workflow struct {
-	Name string         `yaml:"name"`
-	On   []string       `yaml:"on"`
-	Env  []string       `yaml:"env"`
-	Jobs map[string]Job `yaml:"jobs"`
+	Name  string         `yaml:"name"`
+	On    []string       `yaml:"on"`
+	Env   []string       `yaml:"env"`
+	Shell string         `yaml:"shell"`
+	Jobs  map[string]Job `yaml:"jobs"`
+}
+
+// EffectiveShell returns the shell to use: the first job-level shell, else the
+// workflow shell, else the configured default. An empty result means "auto".
+func (w *Workflow) EffectiveShell(defaultShell string) string {
+	names := make([]string, 0, len(w.Jobs))
+	for name := range w.Jobs {
+		names = append(names, name)
+	}
+	sortStrings(names)
+	for _, name := range names {
+		if s := strings.TrimSpace(w.Jobs[name].Shell); s != "" {
+			return s
+		}
+	}
+	if strings.TrimSpace(w.Shell) != "" {
+		return strings.TrimSpace(w.Shell)
+	}
+	return strings.TrimSpace(defaultShell)
 }
 
 // Parse decodes a workflow YAML document.
